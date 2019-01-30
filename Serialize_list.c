@@ -1,4 +1,4 @@
-#include "dll1.h"
+#include "sll1.h"
 #include "sentinel.h"
 #include "serialize.h"
 #include <stdlib.h>
@@ -110,6 +110,41 @@ person_t* de_serialize_void(ser_buff_t *b)
 
 
 int main(int argc, char **argv){
+    
+    int sock_udp_fd = 0, len, addr_len, opt = 1,
+        reply_msg_size = 0;
+         
+	struct sockaddr_in server_addr,
+                       client_addr;
+
+    if ((sock_udp_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1)
+    {
+        printf("socket creation failed\n");
+        exit(1);
+    }
+
+     server_addr.sin_family = AF_INET;
+     server_addr.sin_port = htons(SERVER_PORT);
+     server_addr.sin_addr.s_addr = INADDR_ANY;
+     addr_len = sizeof(struct sockaddr);
+
+	if (setsockopt(sock_udp_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt))<0)
+	{
+		perror("setsockopt");
+		exit(EXIT_FAILURE);
+	}
+	if (setsockopt(sock_udp_fd, SOL_SOCKET, SO_REUSEPORT, (char *)&opt, sizeof(opt))<0)
+	{
+		perror("setsockopt");
+		exit(EXIT_FAILURE);
+	}
+
+    if (bind(sock_udp_fd, (struct sockaddr *)&server_addr, sizeof(struct sockaddr)) == -1)
+    {
+        printf("socket bind failed\n");
+        exit(1);
+    }
+
 
     person_t *person1 = calloc(1, sizeof(person_t));
     strncpy(person1->name, "Abhishek", strlen("Abhishek"));
@@ -132,7 +167,6 @@ int main(int argc, char **argv){
     person4->weight = 70;
 
     /*Create a new doubly Linked List*/
- 
     dll_t *person_db = get_new_dll();
 
     At_front(&person_db->head, person1);
@@ -143,8 +177,33 @@ int main(int argc, char **argv){
     printf("printing the object to be serialized on sending machine before serialiation\n\n");
     print_person_db(person_db);
 
-    ser_buff_t *b;
-    init_serialized_buffer(&b);
+    ser_buff_t *server_recv_ser_buffer = NULL,
+               *server_send_ser_buffer = NULL;
+
+    init_serialized_buffer_of_defined_size(&server_recv_ser_buffer, 
+                                MAX_RECV_SEND_BUFF_SIZE);
+
+    init_serialized_buffer_of_defined_size(&server_send_ser_buffer, 
+                                MAX_RECV_SEND_BUFF_SIZE);
+    
+    printf("Server ready to service rpc calls\n");
+
+READ:
+    reset_serialize_buffer(server_recv_ser_buffer);
+
+    len = recvfrom(sock_udp_fd, server_recv_ser_buffer->b, 
+                   get_serialize_buffer_length(server_recv_ser_buffer),
+                   0,(struct sockaddr *)&client_addr, &addr_len);
+
+    printf("No of bytes recvd from client = %d\n", len); 
+
+    /*prepare the buffer to store the reply msg to be sent to client*/
+    reset_serialize_buffer(server_send_ser_buffer);   
+
+
+
+    //ser_buff_t *b;
+    //init_serialized_buffer(&b);
 
     /*Serialize the person_t object. It will recirsively serialize all internal sub-structures*/
     //serialize_person_t (&p1, b);
