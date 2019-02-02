@@ -1,18 +1,23 @@
-#include "sll1.h"
-#include "sentinel.h"
-#include "serialize.h"
+#include "sll/sll1.h"
+#include "DeSerialization/sentinel.h"
+#include "DeSerialization/serialize.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <memory.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include "rpc_common.h"
 
 /*Application specific data structures*/
 typedef struct person_{
-
     char name[32];
     int age;
     int weight;
 } person_t;
+
+int a;
+char buffer[128];
 
 void serialize_struct_Node(struct Node*obj, ser_buff_t *b);
 void serialize_dll_t(dll_t * obj, ser_buff_t *b);
@@ -33,24 +38,40 @@ print_person_details(person_t *person){
     printf("\n");
 }
 
+
 static void print_person_db(dll_t* person_db) 
 {
     if(!person_db || !person_db->head) return;
-    //printf("\nTraversal in forward direction \n");
-
+    
     struct Node *node = person_db->head;
     person_t *data = NULL;
   
      while (node != NULL) { 
         data = node->data;
         print_person_details(data);
-        //last = node; 
         node = node->next; 
     } 
 }
 
 
-void serialize_dll_t(dll_t * obj, ser_buff_t *b)
+struct Node* find_person_db(dll_t* person_db, char*name) 
+{
+    if(!person_db || !person_db->head) return;
+    
+    struct Node *node = person_db->head;
+    person_t *data = NULL;
+   
+     while (node != NULL) { 
+        data = node->data;
+        if(!strncmp(data->name, name,sizeof(name)))
+            return node;
+        node = node->next; 
+    } 
+    return NULL;
+}
+
+
+void list_server_stub_marshal(dll_t * obj, ser_buff_t *b)
 {
   SENTINEL_INSERTION_CODE(obj,b);
   serialize_struct_Node(obj->head, b);
@@ -64,22 +85,22 @@ void serialize_struct_Node(struct Node*obj, ser_buff_t *b)
 }
 
 
-dll_t* de_serialize_dll_t(ser_buff_t *b)
-{
-  SENTINEL_DETECTION_CODE(b);
-  dll_t* obj = calloc(1, sizeof(dll_t));
-  obj->head = de_serialize_struct_Node(b);
-  return obj;
-}
+//dll_t* de_serialize_dll_t(ser_buff_t *b)
+//{
+//  SENTINEL_DETECTION_CODE(b);
+//  dll_t* obj = calloc(1, sizeof(dll_t));
+//  obj->head = de_serialize_struct_Node(b);
+//  return obj;
+//}
 
-struct Node* de_serialize_struct_Node(ser_buff_t *b)
-{
-  SENTINEL_DETECTION_CODE(b);
-  struct Node*obj = calloc(1,sizeof(struct Node));
-  obj->data = de_serialize_void(b);
-  obj->next = de_serialize_struct_Node(b);
-  return obj;
-}
+//struct Node* de_serialize_struct_Node(ser_buff_t *b)
+//{
+//  SENTINEL_DETECTION_CODE(b);
+//  struct Node*obj = calloc(1,sizeof(struct Node));
+//  obj->data = de_serialize_void(b);
+//  obj->next = de_serialize_struct_Node(b);
+//  return obj;
+//}
 
 
 void serialize_void(void* obj1, ser_buff_t *b)
@@ -95,18 +116,44 @@ void serialize_void(void* obj1, ser_buff_t *b)
 }
 
 
-person_t* de_serialize_void(ser_buff_t *b)
-{
-   int loop_var = 0;
-    unsigned int sentinel = 0xFFFFFFFF;
-    SENTINEL_DETECTION_CODE(b);
+//person_t* de_serialize_void(ser_buff_t *b)
+//{
+//   int loop_var = 0;
+//    unsigned int sentinel = 0xFFFFFFFF;
+//    SENTINEL_DETECTION_CODE(b);
 
-    person_t *obj =  calloc(1, sizeof(person_t)); 
-    de_serialize_data((char *)obj->name, b, 32);
-    de_serialize_data((char *)&obj->age, b, sizeof(int));
-    de_serialize_data((char *)&obj->weight, b, sizeof(int));
-    return obj;
+//    person_t *obj =  calloc(1, sizeof(person_t)); 
+//    de_serialize_data((char *)obj->name, b, 32);
+//    de_serialize_data((char *)&obj->age, b, sizeof(int));
+//    de_serialize_data((char *)&obj->weight, b, sizeof(int));
+//    return obj;
+//}
+
+void list_server_stub_unmarshal(ser_buff_t *server_recv_ser_buffer){
+
+    de_serialize_data((char *)&a, server_recv_ser_buffer, sizeof(int)); 
+   
+    if(a == 2)
+       de_serialize_data((char *)buffer, server_recv_ser_buffer, 128);
 }
+
+
+
+void rpc_server_process_msg(ser_buff_t *server_recv_ser_buffer, 
+                       ser_buff_t *server_send_ser_buffer, dll_t *person_db){
+
+   list_server_stub_unmarshal(server_recv_ser_buffer); 
+   
+   if(a==1)
+     list_server_stub_marshal(person_db, server_send_ser_buffer);
+   
+   if(a==2)
+   {
+         struct Node* new_node = find_person_db(person_db, buffer); 
+         serialize_void(new_node->data, server_send_ser_buffer);
+   }    
+}
+
 
 
 int main(int argc, char **argv){
@@ -166,7 +213,7 @@ int main(int argc, char **argv){
     person4->age = 25;
     person4->weight = 70;
 
-    /*Create a new doubly Linked List*/
+  
     dll_t *person_db = get_new_dll();
 
     At_front(&person_db->head, person1);
@@ -197,8 +244,21 @@ READ:
 
     printf("No of bytes recvd from client = %d\n", len); 
 
-    /*prepare the buffer to store the reply msg to be sent to client*/
-    reset_serialize_buffer(server_send_ser_buffer);   
+    reset_serialize_buffer(server_send_ser_buffer); 
+
+    rpc_server_process_msg(server_recv_ser_buffer, server_send_ser_buffer, person_db); 
+
+    len = sendto(sock_udp_fd, server_send_ser_buffer->b, 
+                 get_serialize_buffer_data_size(server_send_ser_buffer),
+                 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
+    
+    printf("rpc server replied with %d bytes msg\n", len);
+    goto READ;
+    return 0; 
+
+}
+
+   
 
 
 
@@ -207,18 +267,18 @@ READ:
 
     /*Serialize the person_t object. It will recirsively serialize all internal sub-structures*/
     //serialize_person_t (&p1, b);
-    serialize_dll_t(person_db, b);
+    ///serialize_dll_t(person_db, b);
     /*Now assume that we have sent the serialized buffer b to recieving machine*/
 
 
     /* Recieving machine has recieved the serialized buffer, Lets derialize it and reconstruct the object from it*/
-    reset_serialize_buffer(b);
-    dll_t *person_db1 = de_serialize_dll_t(b);
-    printf("after serialiation\n\n");
-    print_person_db(person_db1);
+    //reset_serialize_buffer(b);
+    //dll_t *person_db1 = de_serialize_dll_t(b);
+    //printf("after serialiation\n\n");
+    //print_person_db(person_db1);
     
-    return 0;
-}
+    //return 0;
+
 
 
 

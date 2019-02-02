@@ -5,10 +5,114 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include "rpc_common.h"
-#include "De_Serialization/serialize.h"
+#include "DeSerialization/serialize.h"
+#include "DeSerialization/sentinel.h"
+#include "sll/sll1.h"
 
-void
-rpc_send_recv (ser_buff_t *client_send_ser_buffer, 
+
+typedef struct person_{
+
+    char name[32];
+    int age;
+    int weight;
+} person_t;
+
+
+void serialize_struct_Node(struct Node*obj, ser_buff_t *b);
+void serialize_dll_t(dll_t * obj, ser_buff_t *b);
+
+struct Node* de_serialize_struct_Node(ser_buff_t *b);
+dll_t* de_serialize_dll_t(ser_buff_t *b);
+
+void serialize_void(void* obj, ser_buff_t *b);
+person_t* de_serialize_void(ser_buff_t *b);
+
+
+static void
+print_person_details(person_t *person){
+
+    printf("Name = %s\n",   person->name);
+    printf("Age = %d\n",    person->age);
+    printf("weight = %d\n", person->weight);
+    printf("\n");
+}
+
+
+static void print_person_db(dll_t* person_db) 
+{
+    if(!person_db || !person_db->head) return;
+    
+    struct Node *node = person_db->head;
+    person_t *data = NULL;
+  
+     while (node != NULL) { 
+        data = node->data;
+        print_person_details(data);
+        node = node->next; 
+    } 
+}
+
+
+
+//void serialize_dll_t(dll_t * obj, ser_buff_t *b)
+//{
+//  SENTINEL_INSERTION_CODE(obj,b);
+//  serialize_struct_Node(obj->head, b);
+//}
+
+//void serialize_struct_Node(struct Node*obj, ser_buff_t *b)
+//{
+//   SENTINEL_INSERTION_CODE(obj,b);
+//   serialize_void(obj->data,b);
+//   serialize_struct_Node(obj->next,b);
+//}
+
+
+dll_t* list_client_stub_unmarshal(ser_buff_t *b)
+{
+  SENTINEL_DETECTION_CODE(b);
+  dll_t* obj = calloc(1, sizeof(dll_t));
+  obj->head = de_serialize_struct_Node(b);
+  return obj;
+}
+
+struct Node* de_serialize_struct_Node(ser_buff_t *b)
+{
+  SENTINEL_DETECTION_CODE(b);
+  struct Node*obj = calloc(1,sizeof(struct Node));
+  obj->data = de_serialize_void(b);
+  obj->next = de_serialize_struct_Node(b);
+  return obj;
+}
+
+
+//void serialize_void(void* obj1, ser_buff_t *b)
+//{
+//   int loop_var = 0;
+//    unsigned int sentinel = 0xFFFFFFFF;
+//    person_t *obj = (person_t*)obj1;
+    
+//    SENTINEL_INSERTION_CODE(obj,b);
+//    serialize_data(b, (char *)obj->name, 32);
+//    serialize_data(b, (char *)&obj->age, sizeof(int));
+//    serialize_data(b, (char *)&obj->weight, sizeof(int));
+//}
+
+person_t* de_serialize_void(ser_buff_t *b)
+{
+   int loop_var = 0;
+    unsigned int sentinel = 0xFFFFFFFF;
+    SENTINEL_DETECTION_CODE(b);
+
+    person_t *obj =  calloc(1, sizeof(person_t)); 
+    de_serialize_data((char *)obj->name, b, 32);
+    de_serialize_data((char *)&obj->age, b, sizeof(int));
+    de_serialize_data((char *)&obj->weight, b, sizeof(int));
+    return obj;
+}
+
+
+void rpc_send_recv (ser_buff_t *client_send_ser_buffer, 
                ser_buff_t *client_recv_ser_buffer){
 
     struct sockaddr_in dest;
@@ -40,100 +144,76 @@ rpc_send_recv (ser_buff_t *client_send_ser_buffer,
     printf("%s() : %d bytes recieved\n", __FUNCTION__, recv_size);
 }
 
-/* client_stub_marshal()*/
-ser_buff_t *
-multiply_client_stub_marshal(int a, int b){
+
+
+
+ser_buff_t* list_client_stub_marshal(int a, char* buffer){
 
     ser_buff_t *client_send_ser_buffer = NULL;
     init_serialized_buffer_of_defined_size(&client_send_ser_buffer, MAX_RECV_SEND_BUFF_SIZE);
 
-    /*Serialize the first Argument*/
     serialize_data(client_send_ser_buffer, (char *)&a, sizeof(int));
-    /*Serialize the second Argument*/
-    serialize_data(client_send_ser_buffer, (char *)&b, sizeof(int));
-
-    /*Serialize buffer looks like this 
-     *
-     *  +---------+---------+
-     *  |         |         |
-     *  |   Arg1  |   Arg2  |
-     *  +---------+---------+
-     *  <----4----><----4--->
-     * */
+    if(a==2)
+    {
+      serialize_data(client_send_ser_buffer, (char *)buffer, 128);
+    }
     return client_send_ser_buffer;
 }
 
-int multiply_client_stub_unmarshal(ser_buff_t *client_recv_ser_buffer){
 
-    /*Reconstruct the result obtained from Server*/
-    int res = 0;
-    de_serialize_data((char *)&res, client_recv_ser_buffer, sizeof(int));
-    return res;
-}
 
 void 
 init_rpc_infra(){
-
-    /*Initialize anything before starting RPC , if any*/    
 }
 
 
-int
-multiply_rpc(int a , int b){
+void list_rpc(int a, char* buffer){
 
-    /*init RPC buffers*/
     init_rpc_infra();
 
-    /*Step 2 : Serialize/Marshal the arguments*/
-    /*Signature :  ser_buff_t* (client_stub_marshal) <Arg1, Arg2, . . . ,> */
-    ser_buff_t *client_send_ser_buffer = multiply_client_stub_marshal(a, b);
+    ser_buff_t *client_send_ser_buffer = list_client_stub_marshal(a, buffer);
     ser_buff_t *client_recv_ser_buffer = NULL;
 
-    /*Prepare for recieving the data from Server*/
     init_serialized_buffer_of_defined_size(&client_recv_ser_buffer, 
                         MAX_RECV_SEND_BUFF_SIZE);
 
-    /*Step 3 : Send the serialized data to the server,
-     * and wait for the reply*/
+    rpc_send_recv(client_send_ser_buffer, client_recv_ser_buffer);
 
-    /*Fn that will work for all RPCs
-     * Signature : void (rpc_send_recv) <ser_buff_t *, ser_buff_t *> */
-    
-     rpc_send_recv(client_send_ser_buffer, client_recv_ser_buffer);
-     /*After sending the data to the server, client should free the 
-      * memory hold by the client_send_ser_buffer*/
-     free_serialize_buffer(client_send_ser_buffer);
-     client_send_ser_buffer = NULL;
-
-    /*Step 4 , 5, 6 , 7, 8 are executed on Server side*/
-
-    /*Step 9 : Unmarshal the serialized data (result) recvd from Server,
-     * and reconsctruct the RPC return type
-     * Signature : <rpc return type> (client_stub_unmarshal) <ser_buff_t *>
-     * */
-     
-    int res = multiply_client_stub_unmarshal(client_recv_ser_buffer);
-
-    /*Client has successfully reconstructed the result object from
-     * serialized data recvd from Server, Time to free client_recv_ser_buffer*/
-
+    free_serialize_buffer(client_send_ser_buffer);
+    client_send_ser_buffer = NULL;
+    if(a==1)
+        {
+           dll_t* student_db = list_client_stub_unmarshal(client_recv_ser_buffer);
+           print_person_db(student_db);
+        }
+    if(a==2)
+       {
+          person_t *person =   de_serialize_void(client_recv_ser_buffer);
+          print_person_details(person);
+       }
     free_serialize_buffer(client_recv_ser_buffer);
-    return res;
 }
+
 
 int
 main(int argc, char **argv){
 
-    int a, b;
-    printf("Enter Ist number : ");
-    scanf("%d", &a);
-    printf("Enter IInd number : ");
-    scanf("%d", &b);
-
-    /*Step 1 : Invoke the rpc*/
-    int res = multiply_rpc(a, b);
-
-    /*Step 7 : Print the RPC result*/
-    printf("res = %d\n", res);
+    int a;
+    char buffer[128]="\0";
+  
+   while(1)
+    {
+      printf("Enter 1 for getting all the student information\n");
+      printf("Enter 2 for getting studdent information by name\n");
+      scanf("%d", &a);
+    
+     if(a==2)
+      {
+         printf("\nEnter the name of the student for his information\n");
+         scanf("%s",buffer);
+      }
+    
+     list_rpc(a, buffer);
+   }   
     return 0; 
 }
